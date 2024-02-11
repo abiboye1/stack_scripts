@@ -1,0 +1,444 @@
+#!/bin/bash
+
+TS=`date "+%m%d%y%H%M%S"`
+#Functions Definition
+<<Comment
+secure_copy()
+{
+   if ( grep "$destination_server" /home/oracle/scripts/practicedir_abi_sep23/cloud_servers.txt ); then
+		#Running the scp command to send dump file to backup location on the cloud server
+		scp -r -i $private_key $source_path_backup $destination_server:$destination_path_backup
+
+      #Running the scp command to send file/directory to a cloud server
+      scp -r -i $private_key $source_path $destination_server:$destination_path
+   else
+      #Running the scp command to send file/directory to an on-prem server
+      scp -r $source_path $destination_server:$destination_path
+   fi
+}
+Comment
+
+backup_f_d()
+{
+	echo "Calling the backup function"
+	mkdir -p $destination
+		echo "Checking exit status for creating backup destination"
+		if (( $? != 0 )); then
+			echo "Destination creation failed"
+		fi
+	#Copying file/directory to a backup location
+	cp -r $src $destination
+		#Checking failed exit status in order to send failure email
+		if (( $? != 0 )); then
+		   echo "Copy command failed"
+			echo "Copy command failed! Backup function call was unsuccessful" | mailx -s "Email sent!" stackcloud11@mkitconsulting.net
+			exit
+		else
+			#List destination directory if copy command succeeds
+			ls -ltr $destination
+		fi
+}
+
+disk_util()
+{
+	DISK_UTILIZATION=`df -h | grep $DISK | awk '{print $4}' | sed 's/%//g'`
+	disk_util_status=$?
+	
+	disks="/backup /u01 /u02 /u03 /u04 /u05"
+	disk_exist=false
+
+	for disk in $disks
+	do
+		if [[ $DISK == $disk ]]; then
+			disk_exist=true
+			echo "Disk exists"
+			break
+		fi
+	done
+
+	if [[ $disk_util_status == 0 && $disk_exist == true ]]; then
+		if [[ $DISK_UTILIZATION > $THRESHOLD ]]; then
+  			echo "WARNING!!! Disk utilization is at $DISK_UTILIZATION%, over the $THRESHOLD% threshold"
+		else
+  			echo "Disk utilization is $DISK_UTILIZATION%"
+		fi
+		echo "Disk utilization function call was successful"
+		echo "Disk utilization function call was successful" | mailx -s "Email sent!" stackcloud11@mkitconsulting.net
+	elif (( $disk_util_status != 0 )); then
+		echo "Disk utilization function call failed"
+		echo "Disk utilization function call failed" | mailx -s "Email sent!" stackcloud11@mkitconsulting.net
+	elif [[ $disk_exist == false ]]; then
+		echo "Invalid disk entry! Disk utilization function call failed"
+		echo "Invalid disk entry! Disk utilization function call failed" | mailx -s "Email sent!" stackcloud11@mkitconsulting.net
+	fi
+}
+
+database_backup()
+{
+   #Running database environment variable script
+   . /home/oracle/scripts/oracle_env_APEXDB.sh
+   #Checking conditions to see that database instance is up
+   if ( ps -ef |grep pmon |grep APEXDB ); then
+      echo "Log into the APEXDB database if the conditions above are true"
+      sqlplus stack_temp/stackinc@APEXDB<<EOF
+      set echo on feedback on
+      spool /home/oracle/scripts/practicedir_abi_sep23/db_status.log
+      show user;
+      select * from global_name;
+      select status from v\$instance;
+      spool off
+EOF
+			#Checking exit status for database login
+			if (( $? == 0 )); then
+   			echo "Database login was successful"
+			fi
+		if ( grep "OPEN" /home/oracle/scripts/practicedir_abi_sep23/db_status.log ); then
+			echo "Database is open and login was successful"
+		else
+			echo "Database is not open"
+			exit
+		fi
+   else
+      echo "Database instance is NOT running"
+      exit
+   fi
+	#Taking user inputs for schemas
+#	read -p "Enter the list of schemas that you'd like to backup: " SCHEMAS
+	schemas="$SCHEMAS"
+	for x in $schemas
+	do
+		#Creating a par file 
+		echo "userid='/ as sysdba'">export_${x}_${RUNNER}.par
+		echo "schemas=${x}">>export_${x}_${RUNNER}.par
+		echo "dumpfile=${x}_${RUNNER}_${TS}.dmp">>export_${x}_${RUNNER}.par
+		echo "logfile=${x}_${RUNNER}_${TS}.log">> export_${x}_${RUNNER}.par
+		echo "directory=${par_directory}">>export_${x}_${RUNNER}.par
+		expdp parfile=export_${x}_${RUNNER}.par
+		sleep 5
+			#Checking exit status for running parameter file
+			if (( $? == 0 )); then
+				echo "Parameter file ran successfully"
+			fi
+		#Checking to ensure that schema backup taken is successful
+		if ( grep "successfully completed" /backup/AWSSEP23/APEXDB/${x}_${RUNNER}_${TS}.log ); then
+			echo "Backup completed successfully"
+			echo "Backup completed successfully" | mailx -s "Email sent!" stackcloud11@mkitconsulting.net</backup/AWSSEP23/APEXDB/${x}_${RUNNER}_${TS}.log
+		else
+			echo "Backup failed"
+		fi
+		echo
+		#<<Comment
+		##Zipping *abib* files in the backup location
+		tar -cvf $source_path_backup/${x}_${RUNNER}_$TS.tar ${x}_${RUNNER}_${TS}.dmp ${x}_${RUNNER}_${TS}.log --remove-files
+		
+		echo "Implementing retention policy"
+		#Look for files that exceed the rentention period of two days
+		echo "The files below are more than two days old"
+		find $source_path_backup -name "*${RUNNER}*" -mtime +2 -exec ls -ltr {} \;
+		#Check if user would like to delete the older files
+		read -p "Would you like to delete files older than 2 days? Y/N: " INPUT
+		if [[ $INPUT == 'Y' ]]; then
+   		echo "Deleting older files"
+   		find $source_path_backup -name "*${RUNNER}*" -mtime +2 -exec rm -rf {} \;
+   		#Listing newer files left in the backup directory
+   		ls -ltr $source_path_backup | grep "${RUNNER}"
+		#else
+   	#	exit
+		fi
+#Comment
+	done
+}
+
+secure_copy()
+{
+   if ( grep "$destination_server" /home/oracle/scripts/practicedir_abi_sep23/cloud_servers.txt ); then
+      #Running the scp command to send dump file to backup location on the cloud server
+      #scp -r -i $private_key "$dumpfile" "$destination_server:$destination_path_backup/"
+
+      #Running the scp command to send file/directory to a cloud server
+      #scp -r -i $private_key "$source_path/import_${x}.sh" "$source_path/impdp_${x}_${RUNNER}.par" "$destination_server:$destination_path/"
+		scp -r -i $private_key $source_path $destination_server:$destination_path
+		if (( $? == 0 )); then
+			echo "Secure copy succeeded"
+			echo "Secure copy succeeded" | mailx -s "Abib Secure Copy - Email Sent!" stackcloud11@mkitconsulting.net
+		else
+			echo "Secure copy failed"
+			echo "Secure copy failed" | mailx -s "Abib Secure Copy Failure - Email Sent!" stackcloud11@mkitconsulting.net
+		fi 
+   else
+      #Running the scp command to send file/directory to an on-prem server
+      scp -r $source_path $destination_server:$destination_path
+   fi
+}	
+
+DATA_MIGRATION()
+{
+	#Calling the database backup function
+	echo "Calling the database backup function"
+	database_backup $SCHEMAS $par_directory $RUNNER
+	
+	#Calling the secure copy function to send dump file to /backup/datapump on the cloud server
+	echo "Calling the secure copy function"
+	#source_path=$source_path_backup/${x}_${RUNNER}_${TS}.dmp	
+	#destination_path=$destination_path_backup
+	#secure_copy $private_key $source_path $destination_server:$destination_path
+#	secure_copy $private_key "$source_path_backup/${x}_${RUNNER}_${TS}.dmp" $destination_server:$destination_path_backup
+#	scp -r -i $private_key "$source_path_backup/${x}_${RUNNER}_${TS}.dmp" $destination_server:$destination_path_backup
+	
+	schemas="$SCHEMAS"
+	for y in $schemas
+	do
+		
+		#Creating the impdp par file
+		echo ${y}
+		echo "Creating the impdp par file"
+   	#cat<<EOF > impdp_${source_schema}_${destination_schema}.par
+		cat<<EOF > impdp_${y}_${RUNNER}.par
+   	userid='/ as sysdba'
+		schemas=${y}
+		remap_schema=${y}:${y}_${RUNNER}_${TS}
+   	dumpfile=${y}_${RUNNER}_${TS}.dmp
+		logfile=impdp_${y}_${RUNNER}.log
+   	directory=${par_directory}
+		table_exists_action=replace
+EOF
+   	#Creating the impdp script that will be used to run the import
+		echo "Creating the impdp script that will be used to run the import"
+   	#cat<<EOF > import_${source_schema}.sh
+		cat<<EOF > import_${y}.sh
+   	export ORACLE_HOME='/u01/app/oracle/product/12.1.0/db_1'
+   	export ORACLE_SID=HERC
+		#/u01/app/oracle/product/12.1.0/db_1/bin/impdp parfile=/home/oracle/scripts/practicedir_abi_sep23/impdp_${y}_${RUNNER}.par
+		/u01/app/oracle/product/12.1.0/db_1/bin/impdp parfile=/backup/datapump/impdp_${y}_${RUNNER}.par
+EOF
+		chmod 744 import_${y}.sh
+		source_path=$source_path_backup/${y}_${RUNNER}_${TS}.tar
+		destination_path=$destination_path_backup
+		secure_copy $private_key $source_path $destination_server:$destination_path
+
+		#scp -r -i $private_key "$source_path_backup/${y}_${RUNNER}_${TS}.dmp" $destination_server:$destination_path_backup
+
+		#Calling the secure copy function to send impdp par file and impdp script to the practicedir directory on the cloud server
+		echo "Calling the secure copy function"
+		source_path="import_${y}.sh impdp_${y}_${RUNNER}.par"
+		destination_path=$destination_path
+		secure_copy $private_key $source_path $destination_server:$destination_path
+		
+		echo ${destination_path}
+		ssh -i $private_key oracle@$destination_server "tar -xvf $destination_path_backup/${y}_${RUNNER}_${TS}.tar -C $destination_path_backup" 
+
+		#Running the import command remotely
+		#ssh -i $private_key $destination_server "/home/oracle/scripts/practicedir_abi_sep23/import_${source_schema}.sh"
+		ssh -i $private_key $destination_server "/home/oracle/scripts/practicedir_abi_sep23/import_${y}.sh"
+		if ( ssh -i $private_key oracle@$destination_server "grep 'completed with' $destination_path_backup/impdp_${y}_${RUNNER}.log" ); then
+			echo "Import succeeded"
+			echo "Import succeeded" | mailx -s "Abib Data Migration - Email Sent!" stackcloud11@mkitconsulting.net<$destination_path_backup/impdp_${y}_${RUNNER}.log
+		else
+    		echo "Import failed"
+		fi
+	done
+}
+
+#Main body
+#Check the function called
+if (( $# == 0 )); then
+   echo -e "What function would you like to call? \nDATA_MIGRATION\nsecure_copy\ndatabase_backup\nbackup_f_d\ndisk_util"
+	read -p "Enter function: " FUNCTION
+	case $FUNCTION in
+		DATA_MIGRATION)
+			if [[ $FUNCTION == "DATA_MIGRATION" ]]; then
+				echo "Calling data migration function"
+				#Prompting user for database backup parameters
+				read -p "Enter the schemas: " SCHEMAS
+				read -p "Enter the directory e.g. DATA_PUMP_DIR: " par_directory
+				read -p "Enter the runner: " RUNNER
+				read -p "Enter files path e.g. /backup/AWSSEP23/APEXDB: " source_path_backup
+
+				#Prompting user for scp parameters
+				read -p "Enter destination server i.e. ec2-54-84-2-5.compute-1.amazonaws.com: " destination_server
+				read -p "Enter the private key i.e. MyEC2KeyPair.pem: " private_key
+				read -p "Enter the source path i.e. /practicedir: " source_path 
+				read -p "Enter the remote backup destination path i.e. /backup/datapump: " destination_path_backup
+				read -p "Enter the remote destination path i.e. /practicedir: " destination_path
+				DATA_MIGRATION				
+			fi
+		;;
+		secure_copy)
+			if [[ $FUNCTION == "secure_copy" ]]; then
+				echo "Calling secure copy function"
+				#Checking if destination server is a cloud server
+				read -p "Enter the destination server i.e. ec2-54-84-2-5.compute-1.amazonaws.com: " destination_server
+				if ( grep "$destination_server" /home/oracle/scripts/practicedir_abi_sep23/cloud_servers.txt ); then
+   				echo "Destination server is a cloud server"
+					read -p "Enter the source schema: " source_schema
+					read -p "Enter the destination schema: " destination_schema
+					read -p "Enter the runner: " RUNNER
+					read -p "Enter the directory: " directory
+   				read -p "Enter the private key i.e. MyEC2KeyPair.pem: " private_key
+   				read -p "Enter the source path i.e. /practicedir: " source_path
+					read -p "Enter the source path i.e. /backup/AWSSEP23/APEXDB: " source_path_backup
+   				read -p "Enter the destination path i.e. /practicedir: " destination_path
+					read -p "Enter the cloud destination path i.e. /backup/datapump: " destination_path_backup
+   				secure_copy ${source_schema} ${destination_schema} ${RUNNER} ${directory} ${private_key} ${source_path} ${source_path_backup} ${destination_server} ${destination_path} ${destination_path_backup}
+				else
+   				#Running the scp command to send file/directory to an on-prem server
+   				echo "Destination server is NOT a cloud server"
+					read -p "Enter the source schema: " source_schema
+					read -p "Enter the source schema: " destination_schema
+					read -p "Enter the runner: " RUNNER
+					read -p "Enter the directory: " directory	
+   				read -p "Enter the source path: " source_path
+   				read -p "Enter the destination path: " destination_path
+   				scp -r $source_path $destination_server:$destination_path
+				fi
+			fi
+		;;
+		database_backup)
+			if [[ $FUNCTION == "database_backup" ]]; then
+				echo "Calling the database_backup function"
+				#Prompting users for parameters at runtime
+				read -p "Enter the schemas: " SCHEMAS
+				read -p "Enter the directory: " par_directory
+				read -p "Enter the runner: " RUNNER
+				read -p "Enter files path e.g. /backup/AWSSEP23/APEXDB: " path
+				database_backup $SCHEMAS $par_directory $RUNNER
+			fi
+		;;
+		backup_f_d)
+			if [[ $FUNCTION == "backup_f_d" ]]; then
+				echo "Calling backup function"
+				#Prompting users for parameters at runtime
+				read -p "Enter backup source: " src
+				read -p "Enter backup destination: " destination
+				read -p "Enter runner: " RUNNER
+				backup_f_d $src $destination $RUNNER
+			fi
+		;;
+		disk_util)
+			if [[ $FUNCTION == "disk_util" ]]; then
+				echo "Calling disk utilization function"
+				#Prompting users for parameters at runtime
+				read -p "Enter threshold: " THRESHOLD
+				read -p "Enter disk: " DISK
+				disk_util $THRESHOLD $DISK
+			fi
+		;;
+		*)
+			echo "Invalid function called"
+		;;
+	esac
+elif [[ $1 == "DATA_MIGRATION" ]]; then
+	echo "Calling data migration function"
+	destination_server=$2
+	if ( grep "$destination_server" /home/oracle/scripts/practicedir_abi_sep23/cloud_servers.txt ); then
+		SCHEMAS=$3
+		par_directory=$4
+		RUNNER=$5
+		source_path_backup=$6
+		private_key=$7
+		source_path=$8
+		destination_path_backup=$9
+		destination_path=${10}
+ 		DATA_MIGRATION ${destination_server} ${SCHEMAS} ${par_directory} ${RUNNER} ${source_path_backup} ${private_key} ${source_path} ${destination_path_backup} ${destination_path}
+	else
+		SCHEMAS=$3
+		par_directory=$4
+		RUNNER=$5
+		source_path_backup=$6		
+		source_path=$7
+		destination_path_backup=$8
+		destination_path=$9
+		DATA_MIGRATION ${destination_server} ${SCHEMAS} ${par_directory} ${RUNNER} ${source_path_backup} ${source_path} ${destination_path_backup} ${destination_path}
+	fi
+   #Providing the runner with usage if the wrong number of command line arguments is provided
+   if [[ $# != 9 ]] || [[ $# != 10 ]]; then
+   	echo "USAGE: Enter 9 command line arguments if you are doing a data migration to an on-prem server"
+		echo "Enter 10 command line arguments if you are doing a data migration to a cloud server"
+   	echo "e.g. secure_copy ${source_schema} ${destination_schema} ${RUNNER} ${directory} ${private_key} ${source_path} ${source_path_backup} ${destination_server} ${destination_path} ${destination_path_backup}"
+      exit
+   fi
+	
+elif [[ $1 == "secure_copy" ]]; then
+	echo "Calling secure copy function"
+	destination_server=$2
+	if ( grep "$destination_server" /home/oracle/scripts/practicedir_abi_sep23/cloud_servers.txt ); then
+		echo "Destination server is a cloud server"
+		source_schema=$3
+		destination_schema=$4
+		RUNNER=$5
+		directory=$6
+   	private_key=$7
+   	source_path=$8
+		source_path_backup=$9
+   	destination_path=$10
+		destination_path_backup=$11
+		secure_copy ${source_schema} ${destination_schema} ${RUNNER} ${directory} ${private_key} ${source_path} ${source_path_backup} ${destination_server} ${destination_path} ${destination_path_backup}
+	else
+		source_schema=$3
+		destination_schema=$4
+		RUNNER=$5
+		directory=$6
+		source_path=$7
+		source_path_backup=$8
+		destination_path=$9
+		destination_path_backup=$10
+   	secure_copy ${source_path} ${destination_server}:${destination_path}
+	fi
+	
+	#Providing the runner with usage if the wrong number of command line arguments is provided
+	if [[ $# != 9 ]] || [[ $# != 10 ]]; then
+   	echo "USAGE: Enter 9 command line arguments if you are doing a secure copy to an on-prem server e.g. \n Enter 10 command line arguments if you are doing a secure copy to a cloud server"
+   	echo "e.g. secure_copy ${source_schema} ${destination_schema} ${RUNNER} ${directory} ${private_key} ${source_path} ${source_path_backup} ${destination_server} ${destination_path} ${destination_path_backup}"
+   	exit
+	fi
+	echo "Calling secure copy function"
+	secure_copy 
+elif [[ $1 == "database_backup" ]]; then
+	echo "Calling the database_backup function"
+	SCHEMAS=$2
+	par_directory=$3
+	RUNNER=$4
+	#Providing the runner with usage if the wrong number of command line arguments is provided
+	if (( $# != 4 )); then
+   	echo "USAGE: Enter 3 command line arguments, e.g.,"
+   	echo "./testargs.sh database_backup schema_name directory RUNNER"
+   	exit
+	fi
+	database_backup ${SCHEMAS} ${par_directory} ${RUNNER}
+elif [[ $1 == "backup" ]]; then
+	echo "Calling the backup function"
+	src=$2
+	dest=$3
+	RUNNER=$4
+	TS=`date "+%m%d%y%H%S"`
+	destination=$dest/$RUNNER/$TS
+	echo "This function has $# command line argument(s)"
+	#Providing the runner with usage if the wrong number of command line arguments is provided
+	if (( $# != 4 )); then
+		echo "USAGE: Enter 4 command line arguments, e.g.,"
+		echo "./testargs.sh backup /home/oracle/scripts/practicedir_abi_sep23/file2.txt /home/oracle/scripts/practicedir_abi_sep23/backup1.10 ABIB"
+		exit
+	fi
+	#The backup function when called with the right number of command line argument will run but provide usage if $# is not equal to 4
+	backup_f_d $src $destination $RUNNER
+	#Checking exit status of backup function to send success or failure email
+	if (( $? == 0 )); then
+		echo "Backup function was called successfully"
+		echo "Backup function was called successfully" | mailx -s "Email sent!" stackcloud11@mkitconsulting.net
+	fi
+elif [[ $1 == "diskcheck" ]]; then
+	echo "Calling the disk utilization function"
+	THRESHOLD=$2
+	DISK=$3
+	echo "This function has $# command line argument(s)"
+	#Providing the runner with usage if the wrong number of command line arguments is provided
+	if (( $# != 3 )); then
+		echo "USAGE: Enter 3 command line arguments, e.g.,"
+		echo "./testargs.sh discheck 50 /u01"
+		exit
+	fi
+	disk_util $THRESHOLD $DISK
+else
+	echo "Your entry is not a defined function"
+fi 
+
