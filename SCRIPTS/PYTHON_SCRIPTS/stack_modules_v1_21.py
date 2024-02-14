@@ -10,7 +10,110 @@ current_time=t.time()
 microseconds = "{:06d}".format(int((current_time - int(current_time)) * 1e6))
 
 #Function declaration
+def read_db_create_grp(**kwargs):
+	#Calling db_conections function
+	db_connection(**kwargs)
+	
+	users = []
+	#Connecting to Oracle database
+	connection = cx.connect(user='STACK_ABI_SEP23', password='stackinc', dsn='MKIT-DEV-OEM/APEXDB')
+	cursor = connection.cursor()
+	cursor.execute("""select username from all_users where username like '%SEP23'""")
+	rows = cursor.fetchall()
+	#Looping through the rows to create users list
+	for row in rows:
+		users.append(row[0])
+	print(users)
+
+	#Calling create IAM Group function
+	aws_create_group(**kwargs)
+
+	# Adding IAM User to Group
+	iam = boto3.client(kwargs['service'])
+
+	#Looping through users list to add each user to group
+	for user in users:
+		response = iam.add_user_to_group(GroupName=kwargs['group'], UserName=kwargs['user'])
+		print()
+		print(response)
+
+
+def aws_add_user_to_group(**kwargs):
+	try:
+		# Adding IAM User to Group
+		iam = boto3.client(kwargs['service'])
+		response = iam.add_user_to_group(GroupName=kwargs['group'], UserName=kwargs['user'])
+		print()
+		print(response)
+
+		# Creating login profile for User
+		response_profile = iam.create_login_profile(UserName=kwargs['user'], Password=kwargs['password'], PasswordResetRequired=True)
+		print()
+		print(response_profile)
+		print()
+ 		#Checking exit statuses of create group and add user to group
+		if response['ResponseMetadata']['HTTPStatusCode'] == 200 and response_profile['ResponseMetadata']['HTTPStatusCode'] == 200:
+			print()
+			print("{} added to {} successfully and login profile created successfully".format(kwarhs['user'], kwargs['group']))
+
+			#Calling db_conections function
+			kwargs['STATUS']='Completed'
+			db_connection(**kwargs)
+	except ClientError as error:
+		print(error.response)
+		print(error.response_profile)
+		if error.response['Error']['Code'] == "NoSuchEntity":
+			print('Group does not exist...Create new group?')
+			#Calling db_conections function
+			kwargs['STATUS']='Error'
+			db_connection(**kwargs)			
+
+			val = input('Enter (y or n): ')
+			if val == 'n':
+				print('You want to use the same group')
+				pass
+			else:
+				print('You want to create a new group')
+				# Creating a new group
+				new_group = input('Enter group name: ')
+				response = iam.create_group(GroupName=new_group)
+				print(response)
+				# Adding User to Group
+				response_adduser = iam.add_user_to_group(GroupName=new_group, UserName=kwargs['user'])	
+				print()
+				print(response_adduser)
+				print()
+		elif error.response_profile['Error']['Code'] == "EntityAlreadyExists":
+			print('User already exists in Group...Add the same user?')
+			#Calling db_conections function
+			kwargs['STATUS']='Error'
+			db_connection(**kwargs)
+
+			val = input("Enter (y or n): ")
+			if val == 'y':
+				print('You want to add the same user')
+				pass
+			else:
+				print('You want to add a new user')
+				new_user=input("Enter User Name: ")
+				response= iam.add_user_to_group(GroupName=kwargs['group'], UserName=new_user)
+				print(response)
+		elif error.response_profile['Error']['Code'] == "PasswordPolicyViolation":
+			print("There is a password policy violation...Enter a new password?")
+			complex_password = input("Enter a complex password: ")
+			# Re-creating login profile for user
+			response_profile = iam.create_login_profile(UserName=kwargs['user'], Password=complex_password, PasswordResetRequired=False)
+			print(response_profile)
+		else:
+			print('Unexpected error occured while adding user to group... exiting from here', error)
+			return 'User could not be added to Group', error	
+			#Calling db_conections function					
+			kwargs['STATUS']='Error'
+			db_connection(**kwargs)
+
 def aws_create_group(**kwargs):
+	#Calling db_conections function
+#	db_connection(**kwargs) -- To be edited after IAM row is created in the DB
 	try:
 		# Creating IAM Group
 		iam = boto3.client(kwargs['service'])
@@ -23,10 +126,23 @@ def aws_create_group(**kwargs):
 			PolicyArn=kwargs['policy_arn'])
 		print()
 		print(response_policy)
+		print()
+		if response['ResponseMetadata']['HTTPStatusCode'] == 200 and response_policy['ResponseMetadata']['HTTPStatusCode'] == 200:
+			print()
+			print("{} created successfully and policy attached successfully".format(kwargs['group']))
+			#Calling db_conections function
+			kwargs['STATUS']='Completed'
+#			db_connection(**kwargs) -- To be edited after IAM row is created in the DB
+
 	except ClientError as error:
 		print(error.response)
 		if error.response['Error']['Code'] == "EntityAlreadyExists":
 			print('Group already exists...Use the same group?')
+
+			#Calling db_conections function
+			kwargs['STATUS']='Error'
+#			db_connection(**kwargs)  -- To be edited after IAM row is created in the DB
+
 			val = input('Enter (y or n): ')
 			if val == 'y':
 				print('You want to use the same group')
@@ -39,17 +155,32 @@ def aws_create_group(**kwargs):
 		else:
 			print('Unexpected error occured while creating group... exiting from here', error)
 			return 'Group could not be created', error
-
+			#Calling db_conections function
+			kwargs['STATUS']='Error'
+#			db_connection(**kwargs)   -- To be edited after IAM row is created in the DB
 
 def aws_create_users(**args):
+	#Calling db_conections function
+	db_connection(**kwargs)
 	try:
 		iam= boto3.client(args['service'])
 		response= iam.create_user(UserName=args['user'])
 		print(response)
+		if response['ResponseMetadata']['HTTPStatusCode'] == 200:
+			print()
+			print("{} was successfully created".format(args['user']))
+			#Calling db_conections function
+			kwargs['STATUS']='Completed'
+			db_connection(**kwargs)
+			
 	except ClientError as error:
 		print(error.response)
 		if error.response['Error']['Code'] == "EntityAlreadyExists":
 			print('User already exists...Use the same user?')
+			#Calling db_conections function
+			kwargs['STATUS']='Error'
+			db_connection(**kwargs)
+
 			val = input("Enter (y or n): ")
 			if val == 'y':
 				print('You want to use the same user')
@@ -62,6 +193,9 @@ def aws_create_users(**args):
 		else:
 			print('Unexpected error occured while creating user... exiting from here', error)
 			return 'User could not be created', error
+			#Calling db_conections function
+			kwargs['STATUS']='Error'
+			db_connection(**kwargs)
 
 
 
@@ -95,22 +229,7 @@ def db_connection(**kwargs):
 		print()
 		print(starttime)
 		print()
-#		op_name = kwargs['op_name'] 
 
-#		cursor = connection.cursor()
-		"""
-		#Reading OP_ID from PROD_OPERATIONS table
-		cursor.execute(""select OP_ID from PROD_OPERATIONS where OP_NAME = :OP_NAME_INS"", OP_NAME_INS = op_name)
-		#Extracting OP_ID from the "select" statement
-		read_op_id = cursor.fetchone()[0]
-		print("PROD_OPERATIONS table OP_ID is %s"%(read_op_id))
-
-		#Reading MONITORING_EMAIL from PROD_OPERATIONS table
-		cursor.execute(""select MONITORING_EMAIL from PROD_OPERATIONS where OP_NAME = :OP_NAME_INS"", OP_NAME_INS = op_name)
-		#Extracting MONITORING_EMAIL from the "select" statement
-		read_monitoring_email = cursor.fetchone()[0]
-		print("PROD_OPERATIONS table MONITORING_EMAIL is %s"%(read_monitoring_email))
-		"""
 		#Inserting into the PROD_ACTIVITIES table
 		cursor.execute("""insert into PROD_ACTIVITIES values (:OP_ID_INS, :OP_STARTTIME_INS, :OP_ENDTIME_INS, :RUNNER_INS, :STATUS_INS, :MON_EMAIL_INS)""",
 		OP_ID_INS = read_op_id,
@@ -208,7 +327,6 @@ def database_backup_function(**kwargs):
 
 
 def G_Zipp(**kwargs):
-	#output_gzip_TS = '{}_{}'.format(kwargs['output_gzip'], TS) - ### Temporarily changed for 1.13
 	# Checking if user wants to compress a file or directory
 	if os.path.isfile(kwargs['source_path']):
 		with open(kwargs['source_path'], 'rb') as my_input:
