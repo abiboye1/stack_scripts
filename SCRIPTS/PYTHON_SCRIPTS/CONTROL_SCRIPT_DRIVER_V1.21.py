@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import stack_modules_v1_20 as sm, sys
+import stack_modules_v1_21 as sm, sys
 
 def stack_modules_function():
 	# Decision number indicates the function the user decides to call.
@@ -14,6 +14,7 @@ def stack_modules_function():
 	# 8 --> Create IAM Users
 	# 9 --> Create IAM Group
 	# 10 --> Add User to Group
+	# 11 --> Read Users from DB and Create Users in AWS IAM GROUP
 
 	# Checking if no command line arguments are called
 	if len(sys.argv) - 1 == 0:
@@ -237,6 +238,18 @@ def stack_modules_function():
 			print("\nThis function call requires 8 arguments and should be ran like this:\npython CONTROL_SCRIPT_DRIVER _V1.18.py 9 iam stack_adm_grp_atm iam_user iam_password")
 		elif len(sys.argv) - 1 == 8:
 			sm.aws_add_user_to_group(service=sys.argv[2], group=sys.argv[3], user=sys.argv[4], password=sys.argv[5], op_name=sys.argv[6], RUNNER=sys.argv[7], STATUS=sys.argv[8])
+
+
+		# CALLING READ USERS FROM DB AND	ADD USER TO AWS IAM GROUP FUNCTION
+	elif decision_no == "11": # READ USERS FROM DB AND ADD USER TO AWS IAM GROUP
+		#Checking if only one argument is passed and taking inputs
+		if len(sys.argv) - 1 == 1:
+			sm.read_db_create_grp(service=input("Enter AWS service name: "), group=input("Enter group name: "), policy_arn=input("Enter policy arn: "))
+		elif len(sys.argv) - 1 != 4:
+			print("Error!\nThere are {} arguments in this call".format(len(sys.argv) - 1))
+			print("\nThis function cal requires 4 arguments and should be ran like this:\npython CONTROL_SCRIPT_DRIVER _V1.21.py 11 iam GROUP_ENG arn:aws:iam::aws:policy/AdministratorAccess")
+		elif len(sys.argv) - 1 == 4:		
+			sm.read_db_create_grp(service=sys.argv[2], group=sys.argv[3], policy_arn=sys.argv[4])
 
 
 	else:

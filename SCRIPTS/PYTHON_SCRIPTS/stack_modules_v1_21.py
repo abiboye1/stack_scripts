@@ -28,15 +28,21 @@ def read_db_create_grp(**kwargs):
 	#Calling create IAM Group function
 	aws_create_group(**kwargs)
 
-	# Adding IAM User to Group
-	iam = boto3.client(kwargs['service'])
-
-	#Looping through users list to add each user to group
+	#Looping through users list to create users and add each user to group
 	for user in users:
-		response = iam.add_user_to_group(GroupName=kwargs['group'], UserName=kwargs['user'])
+		#Creating IAM users for username in list 
+		aws_create_users(user=user, **kwargs)
+		#Adding users to Group
+		iam = boto3.client(kwargs['service'])
+		response = iam.add_user_to_group(GroupName=kwargs['group'], UserName=user)
 		print()
 		print(response)
-
+		#Checking exit statuses of create group 
+		if response['ResponseMetadata']['HTTPStatusCode'] == 200:
+			print("{} added to {} successfully and login profile created successfully".format(kwargs['user'], kwargs['group']))
+			#Calling db_conections function
+			kwargs['STATUS']='Completed'
+			db_connection(**kwargs)
 
 def aws_add_user_to_group(**kwargs):
 	try:
@@ -54,7 +60,7 @@ def aws_add_user_to_group(**kwargs):
  		#Checking exit statuses of create group and add user to group
 		if response['ResponseMetadata']['HTTPStatusCode'] == 200 and response_profile['ResponseMetadata']['HTTPStatusCode'] == 200:
 			print()
-			print("{} added to {} successfully and login profile created successfully".format(kwarhs['user'], kwargs['group']))
+			print("{} added to {} successfully and login profile created successfully".format(kwargs['user'], kwargs['group']))
 
 			#Calling db_conections function
 			kwargs['STATUS']='Completed'
