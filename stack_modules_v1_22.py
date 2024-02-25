@@ -11,17 +11,32 @@ microseconds = "{:06d}".format(int((current_time - int(current_time)) * 1e6))
 
 #Function declaration
 def create_s3_bucket(**kwargs):
+	#Create an STS service client
+	sts_connection = boto3.client('sts')
+
+	#Request for temporary credentials through STS using the role ARN
+	assumed_role_object = sts_connection.assume_role(
+	 RoleArn="arn:aws:iam::730335195244:role/Engineer",
+	 RoleSessionName="Dev_Engineer")	
+	
+	#Get the credentials from the response
+	credentials = assumed_role_object["Credentials"]
+
+	s3_client = boto3.client('s3', aws_access_key_id=credentials['AccessKeyId'],
+	aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+
 	session=boto3.session.Session()
-	iam = boto3.client(kwargs['service'])
 	bucket_name = kwargs['bucket']
 	current_region = session.region_name
 	if current_region == 'us-east-1':
-		bucket_response = iam.create_bucket(Bucket=bucket_name)
+		bucket_response = s3_client.create_bucket(Bucket=bucket_name)
 	else:
-		bucket_response = iam.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={'LocationConstraint': current_region})
+		bucket_response = s3_client.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={'LocationConstraint': current_region})
+	print(bucket_response)
+	print()
 	print(bucket_name, current_region)
-
-
+	return bucket_name, current_region
+	
 def read_db_create_grp(**kwargs):
 	try:
 		#Calling db_conections function

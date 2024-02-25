@@ -270,12 +270,12 @@ def stack_modules_function():
 	elif decision_no == "13": # CREATE S3 BUCKET
 		#Checking if only one argument is passed and taking inputs
 		if len(sys.argv) - 1 == 1:
-			sm.create_s3_bucket(service=input("Enter AWS service name: "), bucket=input("Enter bucket name: "))
-		elif len(sys.argv) - 1 != 3:
+			sm.create_s3_bucket(bucket=input("Enter bucket name: "))
+		elif len(sys.argv) - 1 != 2:
 			print("Error!\nThere are {} arguments in this call".format(len(sys.argv) - 1))
-			print("\nThis function call requires 10 arguments and should be ran like this:\npython CONTROL_SCRIPT_DRIVER _V1.22.py 13 S3 bucket_name")
-		elif len(sys.argv) - 1 == 3:
-			 sm.create_s3_bucket(service=sys.argv[2], bucket=sys.argv[3])
+			print("\nThis function call requires 2 arguments and should be ran like this:\npython CONTROL_SCRIPT_DRIVER _V1.22.py 13 S3 bucket_name")
+		elif len(sys.argv) - 1 == 2:
+			 sm.create_s3_bucket(bucket=sys.argv[2])
 
 	else:
 		print("Invalid decision entered!")
